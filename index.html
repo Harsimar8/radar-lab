@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Radar Lab</title>
+
+  <script>
+    // Must be set before Cesium loads: it resolves its workers and assets
+    // against this at runtime. vite.config.mjs serves them from here.
+    window.CESIUM_BASE_URL = '/cesium/';
+  </script>
+
+  <link rel="stylesheet" href="/cesium/Widgets/widgets.css">
+  <link rel="stylesheet" href="./src/styles.css">
+</head>
+
+<body>
+
+  <div id="cesium" class="map"></div>
+
+  <aside class="panel panel--left">
+
+    <header class="panel__header">
+      <span class="panel__icon">📡</span>
+      <div>
+        <div class="panel__title">Radars</div>
+        <div class="panel__subtitle" id="radar-count">none</div>
+      </div>
+      <button id="add-radar" class="pill pill--on" type="button">+ Radar</button>
+    </header>
+
+    <section class="section">
+      <div id="radar-list"></div>
+    </section>
+
+    <div id="radar-tools" hidden>
+
+      <section class="section">
+        <h4 class="section__title">
+          <span id="selected-name">Radar</span>
+          <button id="delete-radar" class="danger" type="button">Delete</button>
+        </h4>
+
+        <div class="field field--stacked">
+          <span>Heading (°) — <b id="heading-compass">N</b></span>
+          <div class="field__row">
+            <input id="heading-range" type="range" min="0" max="359" step="1" value="0">
+            <input id="heading-number" type="number" min="0" max="359" value="0">
+          </div>
+          <small class="hint">
+            Which way the radar faces. The sector is centred on it, so all three
+            beams swing together and keep their widths.
+          </small>
+        </div>
+
+        <label class="field">
+          <span>Sector Width (°)</span>
+          <input id="sweep" type="number" min="1" max="360" value="360">
+        </label>
+
+        <label class="field">
+          <span>Mast Height (m)</span>
+          <input id="mast" type="number" min="0" max="200" value="0">
+        </label>
+
+        <div class="field field--stacked">
+          <span>BEAM OPACITY (<b id="opacity-value">0.12</b>)</span>
+          <input id="opacity" type="range" min="0" max="0.40" step="0.01" value="0.12">
+          <small class="hint">
+            Three nested beams stack several translucent surfaces each. Drop this
+            to see the terrain and the blocked rays through them; raise it to
+            read the coverage volume.
+          </small>
+        </div>
+
+        <label class="field field--check">
+          <input id="lattice" type="checkbox">
+          <span>Show beam sampling grid</span>
+        </label>
+
+        <label class="field field--check">
+          <input id="marks" type="checkbox" checked>
+          <span>Mark where rays stop</span>
+        </label>
+
+        <label class="field field--check">
+          <input id="rays" type="checkbox">
+          <span>Draw individual rays</span>
+        </label>
+
+        <div class="legend">
+          <span><i class="swatch swatch--object"></i>stopped by an object</span>
+          <span><i class="swatch swatch--terrain"></i>stopped by terrain</span>
+          <span><i class="swatch swatch--clear"></i>reached full range</span>
+        </div>
+      </section>
+
+      <section class="section">
+        <h4 class="section__title">Beams (Width &amp; Range)</h4>
+        <div id="zones"></div>
+      </section>
+
+    </div>
+
+    <section class="section">
+      <h4 class="section__title">
+        Obstacles (GLB)
+        <label class="add-btn">
+          + Add
+          <input id="glb-file" type="file" accept=".glb,.gltf">
+        </label>
+      </h4>
+      <div id="obstacles"></div>
+    </section>
+
+  </aside>
+
+  <aside class="panel panel--right">
+
+    <header class="panel__header">
+      <span class="panel__icon">🎯</span>
+      <div>
+        <div class="panel__title">Detections</div>
+        <div class="panel__subtitle">Objects inside the beams</div>
+      </div>
+    </header>
+
+    <div id="detections" class="detections"></div>
+
+    <header class="panel__header panel__header--sub">
+      <span class="panel__icon">🔎</span>
+      <div>
+        <div class="panel__title">Ray blocking</div>
+        <div class="panel__subtitle">How the beam gets cut</div>
+      </div>
+    </header>
+
+    <div id="diagnostics" class="diagnostics"></div>
+
+  </aside>
+
+  <script type="module" src="./src/main.ts"></script>
+
+</body>
+
+</html>

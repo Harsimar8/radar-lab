@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "allowJs": false,
+    "isolatedModules": true,
+    "experimentalDecorators": true,
+    "paths": {
+      "cesium": ["../on2/node_modules/cesium/Source/Cesium.d.ts"]
+    }
+  },
+  "include": ["src", "vite.config.mjs"]
+}

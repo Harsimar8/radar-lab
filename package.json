@@ -1,0 +1,12 @@
+{
+  "name": "radar-lab",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Minimal sandbox for the radar coverage builder: one radar, GLB obstacles, nothing else.",
+  "scripts": {
+    "dev": "node ../on2/node_modules/vite/bin/vite.js",
+    "build": "node ../on2/node_modules/vite/bin/vite.js build",
+    "preview": "node ../on2/node_modules/vite/bin/vite.js preview"
+  }
+}
