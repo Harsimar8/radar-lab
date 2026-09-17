@@ -30,6 +30,15 @@ interface ZoneState {
     visible: boolean;
     range: number;
     maxElevationDeg: number;
+    /**
+     * Selected for inspection. The overlay switches - stop marks, individual
+     * rays, sampling grid - apply only to selected zones.
+     *
+     * Separate from `visible`: three zones of rays at once is unreadable, but
+     * hiding a zone to quieten the overlay would also remove the beam you were
+     * trying to inspect.
+     */
+    selected: boolean;
 }
 
 interface RadarState {
@@ -69,6 +78,69 @@ const radars: RadarState[] = [];
 let selectedRadarId: string | null = null;
 let nextRadarNumber = 1;
 
+// =============================================================================
+// Persistence
+//
+// Radars outlive a reload, the same as obstacles do. Losing a carefully placed
+// set of radars to a refresh - while the obstacles they were aimed at survived -
+// made the two halves of a scenario disagree every time the page was reloaded.
+//
+// localStorage rather than IndexedDB: this is a few hundred bytes of numbers,
+// with none of the binary payload that made obstacles need a real database.
+// =============================================================================
+
+const RADAR_STORAGE_KEY = "radar-lab.radars.v1";
+
+interface StoredRadar {
+    name: string;
+    longitude: number;
+    latitude: number;
+    headingDeg: number;
+    sectorSweepDeg: number;
+    mastHeight: number;
+    showLattice: boolean;
+    drawRays: boolean;
+    markBlockedRays: boolean;
+    beamOpacity: number;
+    zones: Record<string, ZoneState>;
+}
+
+function saveRadars(): void {
+
+    try {
+        const stored: StoredRadar[] = radars.map(radar => ({
+            name: radar.name,
+            longitude: radar.longitude,
+            latitude: radar.latitude,
+            headingDeg: radar.headingDeg,
+            sectorSweepDeg: radar.sectorSweepDeg,
+            mastHeight: radar.mastHeight,
+            showLattice: radar.showLattice,
+            drawRays: radar.drawRays,
+            markBlockedRays: radar.markBlockedRays,
+            beamOpacity: radar.beamOpacity,
+            zones: Object.fromEntries(radar.zones)
+        }));
+
+        localStorage.setItem(RADAR_STORAGE_KEY, JSON.stringify(stored));
+    } catch (err) {
+        // A full or unavailable store must not break placing radars.
+        console.warn("Could not save radars:", err);
+    }
+}
+
+function loadStoredRadars(): StoredRadar[] {
+
+    try {
+        const raw = localStorage.getItem(RADAR_STORAGE_KEY);
+        const parsed = raw ? JSON.parse(raw) : null;
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (err) {
+        console.warn("Could not read saved radars:", err);
+        return [];
+    }
+}
+
 function defaultZones(): Map<string, ZoneState> {
 
     const zones = new Map<string, ZoneState>();
@@ -77,7 +149,8 @@ function defaultZones(): Map<string, ZoneState> {
         zones.set(zone.name, {
             visible: true,
             range: zone.defaultRange,
-            maxElevationDeg: zone.defaultMaxElevationDeg
+            maxElevationDeg: zone.defaultMaxElevationDeg,
+            selected: true
         });
     }
 
@@ -214,7 +287,8 @@ function buildOptions(radar: RadarState) {
             visible: zone.visible,
             range: zone.range,
             minElevationDeg: 0,
-            maxElevationDeg: zone.maxElevationDeg
+            maxElevationDeg: zone.maxElevationDeg,
+            showOverlay: zone.selected
         };
     }
 
@@ -239,6 +313,13 @@ function buildOptions(radar: RadarState) {
         zoneOverrides
     };
 }
+
+/** Every control that changes a radar routes through here, so nothing is lost. */
+function changeRadar(radar: RadarState): void {
+    saveRadars();
+    void rebuildRadar(radar);
+}
+
 
 async function rebuildRadar(radar: RadarState): Promise<void> {
 
@@ -387,28 +468,45 @@ function moveRadar(radar: RadarState, longitude: number, latitude: number): void
         Cesium.Cartesian3.fromDegrees(longitude, latitude)
     );
 
-    void rebuildRadar(radar);
+    changeRadar(radar);
 }
 
-function addRadar(at?: { longitude: number; latitude: number }): RadarState {
+function addRadar(
+    at?: { longitude: number; latitude: number },
+    saved?: StoredRadar
+): RadarState {
 
-    const position = at ?? viewCentre();
+    const position = saved ?? at ?? viewCentre();
     const id = `radar-${Date.now()}-${nextRadarNumber}`;
-    const name = `Radar ${nextRadarNumber++}`;
+    const name = saved?.name ?? `Radar ${nextRadarNumber}`;
+    nextRadarNumber++;
+
+    const zones = defaultZones();
+
+    // Merge saved zone settings onto the defaults rather than replacing them,
+    // so a save written before a zone existed still loads.
+    if (saved?.zones) {
+        for (const [zoneName, zone] of Object.entries(saved.zones)) {
+            const current = zones.get(zoneName);
+            if (current) {
+                zones.set(zoneName, { ...current, ...zone });
+            }
+        }
+    }
 
     const radar: RadarState = {
         id,
         name,
         longitude: position.longitude,
         latitude: position.latitude,
-        headingDeg: 0,
-        sectorSweepDeg: 360,
-        mastHeight: 0,
-        showLattice: false,
-        drawRays: false,
-        markBlockedRays: true,
-        beamOpacity: 0.12,
-        zones: defaultZones(),
+        headingDeg: saved?.headingDeg ?? 0,
+        sectorSweepDeg: saved?.sectorSweepDeg ?? 360,
+        mastHeight: saved?.mastHeight ?? 0,
+        showLattice: saved?.showLattice ?? false,
+        drawRays: saved?.drawRays ?? false,
+        markBlockedRays: saved?.markBlockedRays ?? true,
+        beamOpacity: saved?.beamOpacity ?? 0.12,
+        zones,
         marker: createMarker(id, name, position.longitude, position.latitude),
         handles: [],
         detections: [],
@@ -419,6 +517,7 @@ function addRadar(at?: { longitude: number; latitude: number }): RadarState {
 
     radars.push(radar);
     selectRadar(radar.id);
+    saveRadars();
 
     void rebuildRadar(radar);
 
@@ -440,6 +539,8 @@ function removeRadar(id: string): void {
     }
 
     viewer.entities.remove(radar.marker);
+
+    saveRadars();
 
     if (selectedRadarId === id) {
         selectRadar(radars[0]?.id ?? null);
@@ -575,14 +676,18 @@ function renderZones(): void {
         const zone = radar.zones.get(config.name)!;
 
         const card = document.createElement("div");
-        card.className = "card";
+        card.className = "card" + (zone.selected ? " card--picked" : "");
 
         card.innerHTML = `
-            <label class="card__header">
-                <input type="checkbox" data-role="visible" ${zone.visible ? "checked" : ""}>
-                <span class="dot" style="background:${config.cssColor}"></span>
-                <span class="card__name">${config.name}</span>
-            </label>
+            <div class="card__header">
+                <input type="checkbox" data-role="visible" title="Show this beam"
+                    ${zone.visible ? "checked" : ""}>
+                <button type="button" class="zone-pick" data-role="select"
+                    title="Select this beam for the overlays">
+                    <span class="dot" style="background:${config.cssColor}"></span>
+                    <span class="card__name">${config.name}</span>
+                </button>
+            </div>
             <div class="card__fields">
                 <label class="field">
                     <span>RANGE (M)</span>
@@ -599,20 +704,27 @@ function renderZones(): void {
         card.querySelector<HTMLInputElement>('[data-role="visible"]')!
             .addEventListener("change", event => {
                 zone.visible = (event.target as HTMLInputElement).checked;
-                void rebuildRadar(radar);
+                changeRadar(radar);
+            });
+
+        card.querySelector<HTMLButtonElement>('[data-role="select"]')!
+            .addEventListener("click", () => {
+                zone.selected = !zone.selected;
+                renderZones();
+                changeRadar(radar);
             });
 
         card.querySelector<HTMLInputElement>('[data-role="range"]')!
             .addEventListener("change", event => {
                 zone.range = Math.max(100, +(event.target as HTMLInputElement).value);
-                void rebuildRadar(radar);
+                changeRadar(radar);
             });
 
         card.querySelector<HTMLInputElement>('[data-role="elevation"]')!
             .addEventListener("change", event => {
                 zone.maxElevationDeg = +(event.target as HTMLInputElement).value;
                 renderZones();
-                void rebuildRadar(radar);
+                changeRadar(radar);
             });
 
         container.appendChild(card);
@@ -832,7 +944,7 @@ function setHeading(value: number): void {
         radar.headingDeg = normalizeDeg(Math.round(value));
         renderRadarTools();
         renderRadarList();
-        void rebuildRadar(radar);
+        changeRadar(radar);
     });
 }
 
@@ -848,28 +960,28 @@ $<HTMLInputElement>("sweep").addEventListener("change", event => {
     withSelected(radar => {
         radar.sectorSweepDeg = Cesium.Math.clamp(+(event.target as HTMLInputElement).value, 1, 360);
         renderRadarList();
-        void rebuildRadar(radar);
+        changeRadar(radar);
     });
 });
 
 $<HTMLInputElement>("mast").addEventListener("change", event => {
     withSelected(radar => {
         radar.mastHeight = Math.max(0, +(event.target as HTMLInputElement).value);
-        void rebuildRadar(radar);
+        changeRadar(radar);
     });
 });
 
 $<HTMLInputElement>("lattice").addEventListener("change", event => {
     withSelected(radar => {
         radar.showLattice = (event.target as HTMLInputElement).checked;
-        void rebuildRadar(radar);
+        changeRadar(radar);
     });
 });
 
 $<HTMLInputElement>("rays").addEventListener("change", event => {
     withSelected(radar => {
         radar.drawRays = (event.target as HTMLInputElement).checked;
-        void rebuildRadar(radar);
+        changeRadar(radar);
     });
 });
 
@@ -877,14 +989,14 @@ $<HTMLInputElement>("opacity").addEventListener("input", event => {
     withSelected(radar => {
         radar.beamOpacity = +(event.target as HTMLInputElement).value;
         $("opacity-value").textContent = radar.beamOpacity.toFixed(2);
-        void rebuildRadar(radar);
+        changeRadar(radar);
     });
 });
 
 $<HTMLInputElement>("marks").addEventListener("change", event => {
     withSelected(radar => {
         radar.markBlockedRays = (event.target as HTMLInputElement).checked;
-        void rebuildRadar(radar);
+        changeRadar(radar);
     });
 });
 
@@ -1101,4 +1213,15 @@ renderObstacles();
 await glbManager.restoreSaved();
 renderObstacles();
 
-addRadar(START);
+// Radars survive a reload, the same as obstacles. Only an empty store starts
+// one off at the default position.
+const savedRadars = loadStoredRadars();
+
+if (savedRadars.length === 0) {
+    addRadar(START);
+} else {
+    for (const saved of savedRadars) {
+        addRadar(undefined, saved);
+    }
+    selectRadar(radars[0]?.id ?? null);
+}

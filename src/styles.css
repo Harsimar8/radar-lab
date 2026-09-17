@@ -490,3 +490,39 @@ input[type="range"] {
 .swatch--clear {
     background: rgba(255, 255, 255, 0.28);
 }
+
+.swatch--bite {
+    background: rgba(239, 68, 68, 0.55);
+    height: 8px;
+}
+
+.zone-pick {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 2px 4px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.zone-pick:hover {
+    background: rgba(255, 255, 255, 0.07);
+}
+
+/* Selected for the overlays. Deliberately not the same signal as the
+   visibility checkbox - a beam can be drawn without being inspected. */
+.card--picked {
+    border-color: rgba(147, 197, 253, 0.55);
+    background: rgba(59, 130, 246, 0.1);
+}
+
+.card--picked .card__name {
+    color: #bfdbfe;
+}
