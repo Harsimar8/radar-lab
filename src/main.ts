@@ -1,22 +1,21 @@
 import * as Cesium from "cesium";
 
-// The lab imports the REAL radar source out of the main app rather than a copy.
-// A sandbox that drifts from the code it is meant to exercise is worse than no
-// sandbox at all: anything fixed here is fixed in on2, and anything broken here
-// is broken there.
+// The radar source lives in src/radar/, vendored from the main app so this
+// folder runs on its own. It is the code the lab exists to exercise, kept
+// verbatim: a fix made here is a fix to paste back, not a sandbox-only patch.
 import {
     CesiumRadarCoverage,
     type RadarCoverageHandle,
     type RadarZoneOverride
-} from "../../on2/src/app/components/cesium-map/CesiumRadarCoverage";
+} from "./radar/CesiumRadarCoverage";
 
 import {
     collectModelTargets,
     type Detection
-} from "../../on2/src/app/components/cesium-map/CesiumRadarDetection";
+} from "./radar/CesiumRadarDetection";
 
-import { CesiumObjectDetector } from "../../on2/src/app/components/cesium-map/CesiumObjectDetector";
-import { CesiumGlbManager, type PlacedGlb } from "../../on2/src/app/components/cesium-map/CesiumGlbManager";
+import { CesiumObjectDetector } from "./radar/CesiumObjectDetector";
+import { CesiumGlbManager, type PlacedGlb } from "./radar/CesiumGlbManager";
 
 // Same token as the main app - same Ion account, same terrain.
 Cesium.Ion.defaultAccessToken =
@@ -52,6 +51,8 @@ interface RadarState {
     showLattice: boolean;
     drawRays: boolean;
     markBlockedRays: boolean;
+    blockOnTargetBounds: boolean;
+    emptyObjectShadow: boolean;
     beamOpacity: number;
     zones: Map<string, ZoneState>;
 
@@ -101,6 +102,8 @@ interface StoredRadar {
     showLattice: boolean;
     drawRays: boolean;
     markBlockedRays: boolean;
+    blockOnTargetBounds: boolean;
+    emptyObjectShadow: boolean;
     beamOpacity: number;
     zones: Record<string, ZoneState>;
 }
@@ -118,6 +121,8 @@ function saveRadars(): void {
             showLattice: radar.showLattice,
             drawRays: radar.drawRays,
             markBlockedRays: radar.markBlockedRays,
+            blockOnTargetBounds: radar.blockOnTargetBounds,
+            emptyObjectShadow: radar.emptyObjectShadow,
             beamOpacity: radar.beamOpacity,
             zones: Object.fromEntries(radar.zones)
         }));
@@ -223,13 +228,8 @@ function detectionTargets() {
 // Detection highlight
 // =============================================================================
 
-const ZONE_COLORS = new Map(
-    CesiumRadarCoverage.DEFAULT_3D_ZONES.map(zone => [zone.name, zone.color])
-);
-
 /**
- * Paints a silhouette round every model a beam currently holds, in the colour of
- * the zone that holds it.
+ * Paints a red silhouette round every model a beam currently holds.
  *
  * A row in the side panel is easy to miss when you are looking at the terrain,
  * and it cannot tell you WHICH of two similar models was seen. The silhouette is
@@ -240,7 +240,16 @@ const ZONE_COLORS = new Map(
  */
 function applyDetectionHighlights(): void {
 
-    const litBy = new Map<string, Cesium.Color>();
+    // Red, not the zone's colour.
+    //
+    // A zone-coloured outline answers "which beam holds it", but that is
+    // already in the detections list, and on a green beam a green outline is
+    // the one thing that does not stand out. Red is the colour nothing else in
+    // the scene uses now that the blocked space is drawn empty, so an outlined
+    // object reads as found from any angle and at any range.
+    const DETECTED_OUTLINE = Cesium.Color.fromCssColorString("#ef4444");
+
+    const lit = new Set<string>();
 
     for (const radar of radars) {
         for (const detection of radar.detections) {
@@ -251,20 +260,14 @@ function applyDetectionHighlights(): void {
                 continue;
             }
 
-            const color = ZONE_COLORS.get(detection.zoneName);
-
-            if (color && !litBy.has(detection.targetId)) {
-                litBy.set(detection.targetId, color);
-            }
+            lit.add(detection.targetId);
         }
     }
 
     for (const obstacle of glbManager.list()) {
 
-        const color = litBy.get(obstacle.id);
-
-        if (color) {
-            obstacle.model.silhouetteColor = color;
+        if (lit.has(obstacle.id)) {
+            obstacle.model.silhouetteColor = DETECTED_OUTLINE;
             obstacle.model.silhouetteSize = 3;
         } else {
             obstacle.model.silhouetteSize = 0;
@@ -301,6 +304,8 @@ function buildOptions(radar: RadarState) {
         sectorSweepDeg: radar.sectorSweepDeg,
         drawRays: radar.drawRays,
         markBlockedRays: radar.markBlockedRays,
+        blockOnTargetBounds: radar.blockOnTargetBounds,
+        emptyObjectShadow: radar.emptyObjectShadow,
         beamOpacity: radar.beamOpacity,
         beamStyle: radar.showLattice ? ("lattice" as const) : ("solid" as const),
         useObjectPicking: true,
@@ -505,6 +510,8 @@ function addRadar(
         showLattice: saved?.showLattice ?? false,
         drawRays: saved?.drawRays ?? false,
         markBlockedRays: saved?.markBlockedRays ?? true,
+        blockOnTargetBounds: saved?.blockOnTargetBounds ?? true,
+        emptyObjectShadow: saved?.emptyObjectShadow ?? true,
         beamOpacity: saved?.beamOpacity ?? 0.12,
         zones,
         marker: createMarker(id, name, position.longitude, position.latitude),
@@ -656,6 +663,8 @@ function renderRadarTools(): void {
     $<HTMLInputElement>("lattice").checked = radar.showLattice;
     $<HTMLInputElement>("rays").checked = radar.drawRays;
     $<HTMLInputElement>("marks").checked = radar.markBlockedRays;
+    $<HTMLInputElement>("bounds-block").checked = radar.blockOnTargetBounds;
+    $<HTMLInputElement>("empty-shadow").checked = radar.emptyObjectShadow;
     $<HTMLInputElement>("opacity").value = String(radar.beamOpacity);
     $("opacity-value").textContent = radar.beamOpacity.toFixed(2);
 }
@@ -996,6 +1005,20 @@ $<HTMLInputElement>("opacity").addEventListener("input", event => {
 $<HTMLInputElement>("marks").addEventListener("change", event => {
     withSelected(radar => {
         radar.markBlockedRays = (event.target as HTMLInputElement).checked;
+        changeRadar(radar);
+    });
+});
+
+$<HTMLInputElement>("bounds-block").addEventListener("change", event => {
+    withSelected(radar => {
+        radar.blockOnTargetBounds = (event.target as HTMLInputElement).checked;
+        changeRadar(radar);
+    });
+});
+
+$<HTMLInputElement>("empty-shadow").addEventListener("change", event => {
+    withSelected(radar => {
+        radar.emptyObjectShadow = (event.target as HTMLInputElement).checked;
         changeRadar(radar);
     });
 });

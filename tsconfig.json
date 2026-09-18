@@ -10,9 +10,7 @@
     "allowJs": false,
     "isolatedModules": true,
     "experimentalDecorators": true,
-    "paths": {
-      "cesium": ["../on2/node_modules/cesium/Source/Cesium.d.ts"]
-    }
+    "types": ["vite/client"]
   },
   "include": ["src", "vite.config.mjs"]
 }

@@ -90,6 +90,29 @@
           <span>Draw individual rays</span>
         </label>
 
+        <label class="field field--check">
+          <input id="bounds-block" type="checkbox" checked>
+          <span>Stop rays at detected objects</span>
+        </label>
+
+        <small class="hint">
+          Stops the beam on a sphere around each detected object rather than on
+          its triangles, so the cut is rounder and wider than the object really
+          is. A stand-in for triangle blocking, not a replacement — an obstacle
+          sitting on the antenna is ignored, or it would delete the whole beam.
+        </small>
+
+        <label class="field field--check">
+          <input id="empty-shadow" type="checkbox" checked>
+          <span>Leave blocked space empty</span>
+        </label>
+
+        <small class="hint">
+          The beam runs normally up to an object, stops, and draws nothing at all
+          behind it — a clean void the width of the thing that cast it. Detected
+          objects are outlined in red instead. Terrain shadows are unaffected.
+        </small>
+
         <div class="legend">
           <span><i class="swatch swatch--object"></i>stopped by an object</span>
           <span><i class="swatch swatch--terrain"></i>stopped by terrain</span>

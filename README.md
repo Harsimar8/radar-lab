@@ -12,32 +12,47 @@ guess.
 
 ## Running it
 
+Node 20 or newer, then:
+
 ```
 cd radar-lab
+npm install
 npm run dev
 ```
 
-There is **no `npm install`**. This project has no `node_modules` of its own —
-`vite.config.mjs` borrows vite and Cesium from `../on2/node_modules`, and serves
-Cesium's runtime assets straight out of that install. The first start takes a
-few seconds while vite pre-bundles Cesium; after that it is instant.
+That is the whole setup — the folder is self-contained and needs nothing else on
+the machine. The first start takes a few seconds while vite pre-bundles Cesium;
+after that it is instant. It opens on <http://localhost:5180>.
 
-It opens on <http://localhost:5180>.
+`npm run build` writes a static `dist/`, including Cesium's runtime assets under
+`dist/cesium/`, so it can be served by any static file server. `npm run preview`
+serves that build locally.
 
-## What it shares with the main app
+## Layout
 
-The lab imports the **real** source out of `../on2`, not a copy:
+```
+index.html        the UI shell
+src/main.ts       the lab's own wiring: panels, controls, overlays
+src/styles.css
+src/radar/        the radar code under test, vendored from the main app
+vite.config.mjs   dev server + Cesium runtime assets
+```
+
+`src/radar/` holds the pieces the lab exists to exercise:
 
 - `CesiumRadarCoverage.ts` — the coverage builder
+- `CesiumRadarDetection.ts` — target collection and detection types
 - `CesiumObjectDetector.ts` — ray/model blocking
+- `CesiumObstacleGeometry.ts` — obstacle geometry extracted from a GLB
 - `CesiumGlbManager.ts` — obstacle loading, placement, persistence
+- `ObstacleStore.ts` — IndexedDB persistence for placed obstacles
 
-So anything fixed here is fixed in `on2` too, and the lab can never drift onto a
-different version of the code it is meant to exercise. Only the UI shell
-(`index.html`, `src/main.ts`, `src/styles.css`) is local to this project.
+These are copies of the main app's files, unmodified apart from their import
+paths. A fix made here has to be copied back to the main app to land there —
+they are no longer the same file on disk.
 
-Obstacles are stored in the same IndexedDB database as the main app, so a model
-placed in either one shows up in the other.
+Obstacles are stored in an IndexedDB database named `air-defense`, the same name
+the main app uses, so if both are opened from the same origin they share models.
 
 ## Controls
 

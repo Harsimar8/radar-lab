@@ -1,14 +1,13 @@
-import { createReadStream, existsSync, statSync } from "node:fs";
+import { copyFileSync, createReadStream, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
+import { defineConfig } from "vite";
 
-// This project deliberately has no node_modules of its own. It borrows vite and
-// cesium from the main app next door, so the lab can be started with one
-// command and can never drift onto a different Cesium version than the code it
-// is here to exercise.
+// Everything this project needs lives inside this folder: `npm install` then
+// `npm run dev` is the whole setup. Cesium comes out of its own node_modules,
+// so the version the lab runs is pinned by its own package.json.
 const here = fileURLToPath(new URL(".", import.meta.url));
-const mainApp = join(here, "..", "on2");
-const cesiumPackage = join(mainApp, "node_modules", "cesium");
+const cesiumPackage = join(here, "node_modules", "cesium");
 const cesiumBuild = join(cesiumPackage, "Build", "Cesium");
 
 const MIME_TYPES = {
@@ -35,9 +34,9 @@ const MIME_TYPES = {
 /**
  * Cesium loads its web workers, imagery decoders and widget CSS at runtime from
  * CESIUM_BASE_URL rather than through the module graph, so bundling the library
- * is not enough - those files have to be reachable over HTTP too. Normally a
- * plugin copies them into the project; here they are served straight out of the
- * neighbouring install so there is nothing to copy or keep in sync.
+ * is not enough - those files have to be reachable over HTTP too. They are
+ * served straight out of the installed package, so there is nothing to copy or
+ * keep in sync during development.
  */
 function serveCesiumAssets() {
 
@@ -66,28 +65,44 @@ function serveCesiumAssets() {
 
     return {
         name: "serve-cesium-assets",
+
         configureServer(server) {
             server.middlewares.use("/cesium", middleware);
         },
+
         // The production build leaves /cesium/* to be resolved at runtime, so
         // `preview` needs the same middleware or it serves a blank globe.
         configurePreviewServer(server) {
             server.middlewares.use("/cesium", middleware);
+        },
+
+        // `vite build` output is a plain folder someone may serve with any
+        // static file server, which will not run the middleware above. Copy the
+        // runtime assets in afterwards so dist/ stands on its own.
+        closeBundle() {
+            if (this.meta.watchMode) {
+                return;
+            }
+            copyDirectory(cesiumBuild, join(here, "dist", "cesium"));
         }
     };
 }
 
-// A plain object rather than vite's defineConfig(): this project has no
-// node_modules, so a bare `import ... from "vite"` here cannot resolve.
-// defineConfig is only a typing helper and changes nothing at runtime.
-export default {
-    plugins: [serveCesiumAssets()],
-
-    resolve: {
-        alias: {
-            cesium: cesiumPackage
+function copyDirectory(from, to) {
+    mkdirSync(to, { recursive: true });
+    for (const entry of readdirSync(from, { withFileTypes: true })) {
+        const source = join(from, entry.name);
+        const destination = join(to, entry.name);
+        if (entry.isDirectory()) {
+            copyDirectory(source, destination);
+        } else {
+            copyFileSync(source, destination);
         }
-    },
+    }
+}
+
+export default defineConfig({
+    plugins: [serveCesiumAssets()],
 
     optimizeDeps: {
         // Without this, Cesium's several thousand source modules are transformed
@@ -98,11 +113,6 @@ export default {
 
     server: {
         port: 5180,
-        open: true,
-        fs: {
-            // The lab imports the radar source straight out of the main app, so
-            // vite has to be allowed to read outside its own root.
-            allow: [here, mainApp]
-        }
+        open: true
     }
-};
+});
