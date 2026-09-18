@@ -52,7 +52,9 @@ interface RadarState {
     drawRays: boolean;
     markBlockedRays: boolean;
     blockOnTargetBounds: boolean;
-    emptyObjectShadow: boolean;
+    carveBlockedHoles: boolean;
+    showTerrainMask: boolean;
+    emptyBlockedSpace: boolean;
     beamOpacity: number;
     zones: Map<string, ZoneState>;
 
@@ -103,7 +105,9 @@ interface StoredRadar {
     drawRays: boolean;
     markBlockedRays: boolean;
     blockOnTargetBounds: boolean;
-    emptyObjectShadow: boolean;
+    carveBlockedHoles: boolean;
+    showTerrainMask: boolean;
+    emptyBlockedSpace: boolean;
     beamOpacity: number;
     zones: Record<string, ZoneState>;
 }
@@ -122,7 +126,9 @@ function saveRadars(): void {
             drawRays: radar.drawRays,
             markBlockedRays: radar.markBlockedRays,
             blockOnTargetBounds: radar.blockOnTargetBounds,
-            emptyObjectShadow: radar.emptyObjectShadow,
+            carveBlockedHoles: radar.carveBlockedHoles,
+            showTerrainMask: radar.showTerrainMask,
+            emptyBlockedSpace: radar.emptyBlockedSpace,
             beamOpacity: radar.beamOpacity,
             zones: Object.fromEntries(radar.zones)
         }));
@@ -305,7 +311,9 @@ function buildOptions(radar: RadarState) {
         drawRays: radar.drawRays,
         markBlockedRays: radar.markBlockedRays,
         blockOnTargetBounds: radar.blockOnTargetBounds,
-        emptyObjectShadow: radar.emptyObjectShadow,
+        carveBlockedHoles: radar.carveBlockedHoles,
+        showTerrainMask: radar.showTerrainMask,
+        emptyBlockedSpace: radar.emptyBlockedSpace,
         beamOpacity: radar.beamOpacity,
         beamStyle: radar.showLattice ? ("lattice" as const) : ("solid" as const),
         useObjectPicking: true,
@@ -511,7 +519,9 @@ function addRadar(
         drawRays: saved?.drawRays ?? false,
         markBlockedRays: saved?.markBlockedRays ?? true,
         blockOnTargetBounds: saved?.blockOnTargetBounds ?? true,
-        emptyObjectShadow: saved?.emptyObjectShadow ?? true,
+        carveBlockedHoles: saved?.carveBlockedHoles ?? false,
+        showTerrainMask: saved?.showTerrainMask ?? false,
+        emptyBlockedSpace: saved?.emptyBlockedSpace ?? true,
         beamOpacity: saved?.beamOpacity ?? 0.12,
         zones,
         marker: createMarker(id, name, position.longitude, position.latitude),
@@ -664,7 +674,9 @@ function renderRadarTools(): void {
     $<HTMLInputElement>("rays").checked = radar.drawRays;
     $<HTMLInputElement>("marks").checked = radar.markBlockedRays;
     $<HTMLInputElement>("bounds-block").checked = radar.blockOnTargetBounds;
-    $<HTMLInputElement>("empty-shadow").checked = radar.emptyObjectShadow;
+    $<HTMLInputElement>("carve-holes").checked = radar.carveBlockedHoles;
+    $<HTMLInputElement>("terrain-mask").checked = radar.showTerrainMask;
+    $<HTMLInputElement>("empty-shadow").checked = radar.emptyBlockedSpace;
     $<HTMLInputElement>("opacity").value = String(radar.beamOpacity);
     $("opacity-value").textContent = radar.beamOpacity.toFixed(2);
 }
@@ -1016,9 +1028,23 @@ $<HTMLInputElement>("bounds-block").addEventListener("change", event => {
     });
 });
 
+$<HTMLInputElement>("carve-holes").addEventListener("change", event => {
+    withSelected(radar => {
+        radar.carveBlockedHoles = (event.target as HTMLInputElement).checked;
+        changeRadar(radar);
+    });
+});
+
+$<HTMLInputElement>("terrain-mask").addEventListener("change", event => {
+    withSelected(radar => {
+        radar.showTerrainMask = (event.target as HTMLInputElement).checked;
+        changeRadar(radar);
+    });
+});
+
 $<HTMLInputElement>("empty-shadow").addEventListener("change", event => {
     withSelected(radar => {
-        radar.emptyObjectShadow = (event.target as HTMLInputElement).checked;
+        radar.emptyBlockedSpace = (event.target as HTMLInputElement).checked;
         changeRadar(radar);
     });
 });

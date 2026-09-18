@@ -103,9 +103,40 @@
         </small>
 
         <label class="field field--check">
+          <input id="carve-holes" type="checkbox">
+          <span>Full range shell, holes where blocked</span>
+        </label>
+
+        <small class="hint">
+          Draws each beam at its rated range and punches the blocked directions
+          out as holes, so you see both the coverage the radar is specified for
+          and what the ground costs you. The sampling grid is hidden while this
+          is on, because it follows the other shape.
+        </small>
+
+        <label class="field field--check">
+          <input id="terrain-mask" type="checkbox">
+          <span>Terrain mask (red line on the ridge)</span>
+        </label>
+
+        <small class="hint">
+          Traces a red line along the ground everywhere terrain stopped the beam
+          — the skyline this radar actually sees. The line breaks where the cut
+          stops, so a gap in it is a direction the radar can see out of. Applies
+          to the beams you have selected below.
+        </small>
+
+        <label class="field field--check">
           <input id="empty-shadow" type="checkbox" checked>
           <span>Leave blocked space empty</span>
         </label>
+
+        <small class="hint">
+          Wherever the beam is cut — by a ridge or by an object, in every zone —
+          nothing at all is drawn past the cut. The beam just stops. Terrain and
+          objects are treated identically, so a terrain shadow reads as the same
+          kind of event as an obstacle taking a bite out of the beam.
+        </small>
 
         <small class="hint">
           The beam runs normally up to an object, stops, and draws nothing at all

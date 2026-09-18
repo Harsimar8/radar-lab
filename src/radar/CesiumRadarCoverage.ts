@@ -47,12 +47,21 @@ export interface RadarOptions {
     blockOnTargetBounds?: boolean; // also stop rays on each target's BOUNDING SPHERE,
     // not just on its triangles (default false). Coarse on
     // purpose - see the note on targetBoundsBlockDistance.
-    emptyObjectShadow?: boolean;  // leave the space an object blocks completely empty
-    // (default false). Off, the faces of the bite are shaded
-    // and the rays that hit the object are dotted, so the cut
-    // is visible from outside. On, nothing at all is drawn
-    // there: the beam simply stops, and what marks the object
-    // is the object - see the note by the shadow primitive.
+    carveBlockedHoles?: boolean;  // draw each zone at its full nominal range and carve the
+    // blocked directions out as holes, instead of letting the
+    // outer surface follow whatever stopped each ray
+    // (default false). See buildFullRangeShellPrimitive.
+    showTerrainMask?: boolean;    // trace a red line along the ground wherever terrain cut
+    // the beam (default false). The terrain mask: the skyline
+    // the radar actually sees, as opposed to the one it would
+    // see over flat ground.
+    emptyBlockedSpace?: boolean;  // leave every blocked space completely empty, whether an
+    // object or a ridge stopped the beam (default false).
+    // Off, the bite an object takes is shaded and every
+    // stopped ray is dotted. On, nothing at all is drawn
+    // wherever the beam was cut: it simply stops. Terrain
+    // and objects are deliberately treated the same - see
+    // the note in buildRayOverlay.
     showMarker?: boolean;         // draw the antenna dot (default true). Turn it off when the
     // caller keeps its own persistent marker: this one is
     // disposed and recreated on every rebuild, so it blinks out
@@ -234,6 +243,17 @@ const MAX_DEBUG_RAYS_PER_ZONE = 6000;
 // What stopped a ray, in colour. Deliberately NOT the zone colour: the whole
 // point of the overlay is to tell blocked rays apart from ones that simply ran
 // out of range, and a zone-coloured fan cannot say which is which.
+// The terrain mask line - the same red the detected-object outline uses, and
+// deliberately so. A ridge that cuts the beam and a building that cuts the beam
+// are the same event, and the thing that did the cutting is marked the same way
+// in both cases.
+const TERRAIN_MASK_COLOR = Cesium.Color.fromCssColorString("#ef4444");
+
+// Ceiling on separate mask segments per zone. A broken horizon breaks the line
+// at every gap, and each fragment is a clamped polyline entity - cheap on its
+// own, ruinous a few thousand at a time.
+const MAX_TERRAIN_MASK_RUNS = 400;
+
 const STOP_COLOR_TERRAIN = Cesium.Color.fromCssColorString("#f59e0b");
 const STOP_COLOR_OBJECT = Cesium.Color.fromCssColorString("#ef4444");
 
@@ -558,7 +578,9 @@ export class CesiumRadarCoverage {
             beamOpacity = 0.12,
             markBlockedRays = false,
             blockOnTargetBounds = false,
-            emptyObjectShadow = false,
+            carveBlockedHoles = false,
+            showTerrainMask = false,
+            emptyBlockedSpace = false,
             beamStyle = "solid",
             targets,
             onDetections,
@@ -753,7 +775,17 @@ export class CesiumRadarCoverage {
             // terrain. Rays off = the solid shaded coverage volume.
             const showShading = !drawRays;
 
-            const meshPrimitive = showShading
+            const meshPrimitive = (showShading && carveBlockedHoles)
+                ? CesiumRadarCoverage.buildFullRangeShellPrimitive(
+                    zone,
+                    columns,
+                    elevationRingsDeg,
+                    isFullCircle,
+                    radarPosition,
+                    entityId,
+                    beamOpacity
+                )
+                : showShading
                 ? CesiumRadarCoverage.buildMeshPrimitive(
                     zone,
                     columns,
@@ -785,7 +817,7 @@ export class CesiumRadarCoverage {
             // normally up to the object, stops, and leaves a clean void behind
             // it exactly as wide as the thing that cast it. What marks the
             // object is a silhouette on the object.
-            const objectShadowPrimitive = (showShading && !emptyObjectShadow)
+            const objectShadowPrimitive = (showShading && !emptyBlockedSpace)
                 ? CesiumRadarCoverage.buildObjectShadowPrimitive(
                     columns,
                     elevationRingsDeg.length,
@@ -798,7 +830,12 @@ export class CesiumRadarCoverage {
                 viewer.scene.primitives.add(objectShadowPrimitive);
             }
 
-            const wireframePrimitive = CesiumRadarCoverage.buildWireframePrimitive(
+            // The wireframe traces the terrain-following surface, so with the
+            // shell drawn at full range the two describe different shapes and
+            // the ribs read as a second, ragged beam inside the first.
+            const wireframePrimitive = carveBlockedHoles
+                ? null
+                : CesiumRadarCoverage.buildWireframePrimitive(
                 zone,
                 columns,
                 shadowEdge,
@@ -825,6 +862,20 @@ export class CesiumRadarCoverage {
                 )
                 : [];
 
+            // An inspection overlay like the rays and the lattice, so it
+            // follows the same selection: three zones' worth of mask line at
+            // once is unreadable, and every ring of every zone draws its own.
+            const maskEntities = (showTerrainMask && zone.showOverlay)
+                ? CesiumRadarCoverage.buildTerrainMask(
+                    viewer,
+                    zone,
+                    columns,
+                    elevationRingsDeg.length,
+                    isFullCircle,
+                    entityId
+                )
+                : [];
+
             const rayOverlay = ((drawRays || markBlockedRays) && zone.showOverlay)
                 ? CesiumRadarCoverage.buildRayOverlay(
                     viewer,
@@ -833,11 +884,7 @@ export class CesiumRadarCoverage {
                     columns,
                     elevationRingsDeg.length,
                     drawRays,
-                    // A dot sits at the point a ray died, which is ON the
-                    // object's near face - inside the space that is meant to
-                    // read as empty. Terrain dots are unaffected: terrain is
-                    // not what this is emptying.
-                    !emptyObjectShadow
+                    !emptyBlockedSpace
                 )
                 : null;
 
@@ -847,6 +894,7 @@ export class CesiumRadarCoverage {
                     if (objectShadowPrimitive) viewer.scene.primitives.remove(objectShadowPrimitive);
                     if (wireframePrimitive) viewer.scene.primitives.remove(wireframePrimitive);
                     for (const entity of footprintEntities) viewer.entities.remove(entity);
+                    for (const entity of maskEntities) viewer.entities.remove(entity);
                     if (rayOverlay) rayOverlay.dispose();
                 }
             });
@@ -1660,6 +1708,175 @@ export class CesiumRadarCoverage {
     // through the ridge.
     // -------------------------------------------------------------------
 
+    // -------------------------------------------------------------------
+    // Full-range shell, with the blocked parts carved out as holes.
+    //
+    // The alternative to letting the surface follow the terrain. There, the
+    // outer wall is drawn wherever each ray happened to stop, so a radar in
+    // broken country ends up as a few ragged wings and the range it is rated
+    // for is nowhere on screen. Here the shell stays at the nominal range and
+    // the blocked directions are simply absent - you see the circle the radar
+    // would cover, with holes punched through it where the ground gets in the
+    // way, and you can see into the volume through them.
+    //
+    // No new geometry is needed for this. A ray that nothing stopped ends at
+    // exactly zone.range by definition, so the unblocked points ARE the shell;
+    // the whole difference is which faces get drawn. A face survives only if
+    // all four of its corners reached full range, which is what makes the edge
+    // of every hole land on the real boundary between covered and not.
+    //
+    // None of the join, curtain or end-wall machinery applies. That exists to
+    // decide how to close a surface across a range discontinuity, and there are
+    // no discontinuities left to close: every vertex still drawn is at the same
+    // distance as every other one.
+    // -------------------------------------------------------------------
+
+    private static buildFullRangeShellPrimitive(
+        zone: ResolvedZone,
+        columns: ZoneColumn[],
+        elevationRingsDeg: number[],
+        isFullCircle: boolean,
+        radarPosition: Cesium.Cartesian3,
+        entityId: string,
+        beamOpacity: number
+    ): Cesium.Primitive | null {
+
+        const ringCount = elevationRingsDeg.length;
+        const colCount = columns.length;
+
+        if (ringCount < 2 || colCount < 2) {
+            return null;
+        }
+
+        const positionValues: number[] = [];
+
+        for (const column of columns) {
+            for (const point of column.points) {
+                positionValues.push(point.x, point.y, point.z);
+            }
+        }
+
+        const apexIndex = colCount * ringCount;
+        positionValues.push(radarPosition.x, radarPosition.y, radarPosition.z);
+
+        const indexOf = (col: number, ring: number) => col * ringCount + ring;
+
+        /** True when this ray ran the full range - nothing stopped it. */
+        const clear = (col: number, ring: number): boolean =>
+            columns[col].causes[ring] === StopCause.Range;
+
+        const indices: number[] = [];
+
+        const pairCount = isFullCircle ? colCount : colCount - 1;
+
+        for (let c = 0; c < pairCount; c++) {
+
+            const cNext = (c + 1) % colCount;
+
+            for (let r = 0; r < ringCount - 1; r++) {
+
+                // All four corners, or no face. Three out of four would stretch
+                // a triangle from the shell down to whatever stopped the fourth
+                // ray, which is the terrain-following surface again - drawn one
+                // quad at a time and only around the rim of each hole.
+                if (
+                    !clear(c, r) || !clear(cNext, r) ||
+                    !clear(c, r + 1) || !clear(cNext, r + 1)
+                ) {
+                    continue;
+                }
+
+                const i00 = indexOf(c, r);
+                const i01 = indexOf(cNext, r);
+                const i10 = indexOf(c, r + 1);
+                const i11 = indexOf(cNext, r + 1);
+
+                indices.push(i00, i10, i11);
+                indices.push(i00, i11, i01);
+            }
+
+            // Top cap - the cone closing the top of the beam.
+            if (clear(c, ringCount - 1) && clear(cNext, ringCount - 1)) {
+                indices.push(
+                    apexIndex,
+                    indexOf(c, ringCount - 1),
+                    indexOf(cNext, ringCount - 1)
+                );
+            }
+
+            // Bottom cap, only when the beam starts above the horizontal. At
+            // zero elevation the bottom of the volume is the ground itself, and
+            // a cap there is a flat sheet through every hill it crosses.
+            if (zone.minElevationDeg > 0.01 && clear(c, 0) && clear(cNext, 0)) {
+                indices.push(apexIndex, indexOf(cNext, 0), indexOf(c, 0));
+            }
+        }
+
+        // The two flat sides of a sector. A full circle has no edges to close.
+        if (!isFullCircle) {
+
+            for (const c of [0, colCount - 1]) {
+                for (let r = 0; r < ringCount - 1; r++) {
+
+                    if (!clear(c, r) || !clear(c, r + 1)) {
+                        continue;
+                    }
+
+                    indices.push(apexIndex, indexOf(c, r), indexOf(c, r + 1));
+                }
+            }
+        }
+
+        // Every direction blocked. Nothing to draw, and no empty primitive.
+        if (indices.length === 0) {
+            return null;
+        }
+
+        const shellAttributes = new Cesium.GeometryAttributes();
+
+        shellAttributes.position = new Cesium.GeometryAttribute({
+            componentDatatype: Cesium.ComponentDatatype.DOUBLE,
+            componentsPerAttribute: 3,
+            values: new Float64Array(positionValues)
+        });
+
+        const geometry = new Cesium.Geometry({
+            attributes: shellAttributes,
+            indices: new Uint32Array(indices),
+            primitiveType: Cesium.PrimitiveType.TRIANGLES,
+            boundingSphere: Cesium.BoundingSphere.fromVertices(positionValues)
+        });
+
+        const instance = new Cesium.GeometryInstance({
+            geometry,
+            id: { radarParentId: entityId },
+            attributes: {
+                color: Cesium.ColorGeometryInstanceAttribute.fromColor(
+                    zone.color.withAlpha(Cesium.Math.clamp(beamOpacity, 0, 1))
+                )
+            }
+        });
+
+        return new Cesium.Primitive({
+            geometryInstances: instance,
+            appearance: new Cesium.PerInstanceColorAppearance({
+                flat: true,
+                translucent: true,
+                closed: false,
+                renderState: {
+                    // Both sides: the holes are meant to be seen through, which
+                    // means the inside of the far wall is now a surface the eye
+                    // actually lands on.
+                    cull: { enabled: false },
+                    depthTest: { enabled: true },
+                    depthMask: false,
+                    blending: Cesium.BlendingState.ALPHA_BLEND
+                }
+            }),
+            asynchronous: false
+        });
+    }
+
     private static buildMeshPrimitive(
         zone: ResolvedZone,
         columns: ZoneColumn[],
@@ -2099,6 +2316,109 @@ export class CesiumRadarCoverage {
     // ground exactly and it can never cut through anything.
     // -------------------------------------------------------------------
 
+    // -------------------------------------------------------------------
+    // Terrain mask
+    //
+    // A red line lying on the ground through every point where terrain stopped
+    // a ray. That set of points IS the skyline the radar sees: past it the beam
+    // does not reach, and the line is exactly where "covered" becomes "not".
+    //
+    // It is drawn per elevation ring, not once per azimuth, because a beam is a
+    // volume and each ring meets the ground somewhere different - the lowest
+    // ring on the near face of the first ridge, higher rings further out or not
+    // at all. The nested curves that result are the mask at each look-up angle.
+    //
+    // The line BREAKS wherever the cut stops rather than bridging to the next
+    // one. A ridge that blocks between 040 and 055 and again from 120 is two
+    // separate pieces of skyline, and joining them across the clear sector in
+    // between would draw a horizon where the radar can actually see out.
+    // -------------------------------------------------------------------
+
+    private static buildTerrainMask(
+        viewer: Cesium.Viewer,
+        zone: ResolvedZone,
+        columns: ZoneColumn[],
+        ringCount: number,
+        isFullCircle: boolean,
+        entityId: string
+    ): Cesium.Entity[] {
+
+        const colCount = columns.length;
+
+        if (colCount < 2 || ringCount < 1) {
+            return [];
+        }
+
+        if (!Cesium.GroundPolylinePrimitive.isSupported(viewer.scene)) {
+            // Clamping needs a stencil buffer. An unclamped line would float
+            // over the valleys and sink into the hills, which is worse than no
+            // line at all when the whole point is where it meets the ground.
+            return [];
+        }
+
+        const created: Cesium.Entity[] = [];
+
+        const emit = (positions: Cesium.Cartesian3[]): void => {
+
+            if (positions.length < 2 || created.length >= MAX_TERRAIN_MASK_RUNS) {
+                return;
+            }
+
+            const entity = viewer.entities.add({
+                name: `${zone.name} terrain mask`,
+                polyline: {
+                    positions,
+                    width: 3,
+                    material: TERRAIN_MASK_COLOR.withAlpha(0.95),
+                    clampToGround: true
+                }
+            });
+
+            (entity as any).radarParentId = entityId;
+            created.push(entity);
+        };
+
+        for (let r = 0; r < ringCount; r++) {
+
+            const cut = columns.map(column => column.causes[r] === StopCause.Terrain);
+
+            if (!cut.includes(true)) {
+                continue;
+            }
+
+            // A full circle cut at every azimuth is one closed loop, and walking
+            // it from index 0 would leave a seam at north.
+            if (isFullCircle && !cut.includes(false)) {
+                const loop = columns.map(column => column.points[r]);
+                emit([...loop, loop[0]]);
+                continue;
+            }
+
+            // Otherwise start just past a gap, so a run straddling the 359 -> 0
+            // seam comes out as one line instead of two.
+            const start = isFullCircle ? cut.indexOf(false) : 0;
+
+            let run: Cesium.Cartesian3[] = [];
+
+            for (let i = 0; i < colCount; i++) {
+
+                const c = isFullCircle ? (start + i) % colCount : i;
+
+                if (cut[c]) {
+                    run.push(columns[c].points[r]);
+                    continue;
+                }
+
+                emit(run);
+                run = [];
+            }
+
+            emit(run);
+        }
+
+        return created;
+    }
+
     private static buildGroundFootprint(
         viewer: Cesium.Viewer,
         zone: ResolvedZone,
@@ -2212,7 +2532,7 @@ export class CesiumRadarCoverage {
         columns: ZoneColumn[],
         ringCount: number,
         drawLines: boolean,
-        markObjectStops: boolean
+        markStops: boolean
     ): { dispose(): void } | null {
 
         const polylines = drawLines ? new Cesium.PolylineCollection() : null;
@@ -2268,7 +2588,19 @@ export class CesiumRadarCoverage {
                     continue;
                 }
 
-                if (cause === StopCause.Object && !markObjectStops) {
+                // Terrain is marked exactly as an object is - which means, when
+                // the blocked space is meant to read as empty, not marked at
+                // all.
+                //
+                // A ridge and a building cut the beam for the same reason and
+                // the beam should look the same where they do. Dotting one and
+                // not the other made the two read as different KINDS of event:
+                // an obstacle stopped the beam, while terrain merely speckled
+                // it. Worse, the dots sit at the point each ray died - inside
+                // the very volume that is supposed to be empty - so a scatter
+                // of them across a terrain shadow is what stopped that shadow
+                // reading as a shadow at all.
+                if (!markStops) {
                     continue;
                 }
 
